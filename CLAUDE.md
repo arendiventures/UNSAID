@@ -45,6 +45,7 @@ for anyone (human or agent) working in this repository.
 ```
 src/app/(studio)/*          producer screens (shared shell with nav)
 src/app/capture/[episodeId] audience capture view for OBS (no nav, no producer data)
+src/app/remote/*            phone-sized host remote (start/join a session, hold to talk, stop, end)
 src/app/api/**              route handlers (JSON; multipart for uploads)
 src/lib/db                  schema.ts (Drizzle), client.ts (connection + migrate)
 src/lib/research            chunk.ts, ingest.ts, pdf.ts, retrieval.ts (FTS5/BM25)
@@ -86,9 +87,16 @@ in `src/lib/db/client.ts`, regenerate migrations, and replace the FTS5 query in 
 `tsvector`/`ts_rank` (that file is the only consumer of FTS5). Add `pgvector` there if semantic retrieval is
 introduced - and only then describe search as semantic.
 
+## Deployment
+
+`output: "standalone"` in `next.config.ts`; `Dockerfile` copies the standalone server, static assets, `public/`
+and `drizzle/` (migrations run on first DB open). Runtime env: `UNSAID_STORAGE_DIR=/data` on a persistent
+volume, `STUDIO_ACCESS_TOKEN` (mandatory off-loopback), provider keys. `pnpm dev:lan` / `pnpm start:lan` bind to
+all interfaces for Tailscale-style access from a phone; the proxy still requires the token for non-loopback hosts.
+
 ## Commands
 
-`pnpm dev` (127.0.0.1:3000) · `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm db:migrate` · `pnpm db:seed` ·
+`pnpm dev` (127.0.0.1:3000) · `pnpm dev:lan` · `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm db:migrate` · `pnpm db:seed` ·
 `pnpm assets:import <kind> <file> [--guest slug]` · `pnpm build && pnpm start`
 
 ## Milestones

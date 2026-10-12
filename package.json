@@ -5,8 +5,10 @@
   "description": "UNSAID Studio - private production workspace for a human-hosted podcast featuring labeled AI simulations of public figures.",
   "scripts": {
     "dev": "next dev -H 127.0.0.1 -p 3000",
+    "dev:lan": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start -H 127.0.0.1 -p 3000",
+    "start:lan": "next start -H 0.0.0.0 -p 3000",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

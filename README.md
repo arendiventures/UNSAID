@@ -26,7 +26,7 @@ pnpm assets:import guest_concept_image ./path/maxwell-concept.png --guest ghisla
 pnpm assets:import episode_thumbnail ./path/maxwell-thumb.png --guest ghislaine-maxwell
 ```
 
-Checks: `pnpm typecheck`, `pnpm lint`, `pnpm test` (vitest, synthetic fixtures only).
+Checks: `pnpm typecheck`, `pnpm lint`, `pnpm test` (vitest, synthetic fixtures only). Production: `pnpm build && pnpm start`.
 
 ## Architecture (short)
 
@@ -101,6 +101,8 @@ See `.env.example`. Summary:
   projection containing no question/citation/producer/provider fields, markdown/json/review exports containing
   the actual conversation, stop/end, provider status + connection test reporting the exact missing variable,
   guest-with-episodes delete refusal.
+- Production build (`next build`, standalone output) and a boot of the standalone bundle with a fresh storage
+  directory and an access token: migrations ran, the login gate issued and enforced the session cookie.
 - Headless Chromium pass over every screen (overview, guests, guest editor, research + search, source browser,
   episodes, episode detail, settings, assets, studio: start session → ask → answer rendered with citations →
   mark for review → microphone meter with a fake device, capture view, login) with console/page error capture.
@@ -119,6 +121,27 @@ See `.env.example`. Summary:
   only, by design for reliability).
 - **Live avatar**: not implemented (Milestone 3). Tavus and HeyGen hosts were blocked from this environment.
 - **OCR** for scanned PDFs: not implemented; such files are stored and flagged.
+
+## Using it from a phone
+
+The app runs on a computer (or a server); the phone just opens it in the browser. Phone browsers only allow the
+microphone on HTTPS pages, so push-to-talk needs a secure address.
+
+**Own computer + Tailscale (free, no code changes).** Install Tailscale on the computer and the phone, set
+`STUDIO_ACCESS_TOKEN` in `.env.local`, then:
+
+```bash
+pnpm dev:lan             # listens on all interfaces instead of 127.0.0.1
+tailscale serve 3000     # prints an https://… address reachable from the phone
+```
+
+Open that address on the phone, enter the token, and use **/remote** - the phone-sized host remote (big talk
+button, transcript, stop, end). Research, profiles and OBS stay on the desktop studio.
+
+**Hosted (always on).** The `Dockerfile` builds a self-contained image. On Railway, Fly.io or Render: deploy from
+this repo, mount a persistent volume at `/data`, and set `STUDIO_ACCESS_TOKEN`, `ANTHROPIC_API_KEY` and
+`ELEVENLABS_API_KEY` in the host's environment settings. The container refuses requests until the token is set.
+Migrations run on first start; create guests from the Guests screen (the seed script is a dev-only helper).
 
 ## Recording the first rehearsal with OBS
 
