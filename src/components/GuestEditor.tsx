@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Asset, Guest, GuestEntry, GuestInstructionVersion } from "@/lib/db/schema";
 import { ANSWER_LENGTHS, ENTRY_CATEGORIES, GUEST_STATUSES, PERSPECTIVES, RESEARCH_STATUSES } from "@/lib/db/schema";
 import { api } from "@/lib/client";
+import type { VoiceOption } from "@/lib/providers/types";
 import { Badge, Card, Field, Notice, fmtDate } from "./ui";
 
 const CATEGORY_META: Record<(typeof ENTRY_CATEGORIES)[number], { label: string; tone: "ok" | "warn" | "info" | "amber"; help: string }> = {
@@ -40,7 +41,7 @@ export function NewGuestButton() {
   );
 }
 
-export function GuestEditor({ initialGuest, initialEntries, initialVersions, assets }: { initialGuest: Guest; initialEntries: GuestEntry[]; initialVersions: GuestInstructionVersion[]; assets: Asset[] }) {
+export function GuestEditor({ initialGuest, initialEntries, initialVersions, assets, ttsConfigured }: { initialGuest: Guest; initialEntries: GuestEntry[]; initialVersions: GuestInstructionVersion[]; assets: Asset[]; ttsConfigured: boolean }) {
   const router = useRouter();
   const [g, setG] = useState<Guest>(initialGuest);
   const [entries, setEntries] = useState(initialEntries);
@@ -186,15 +187,25 @@ export function GuestEditor({ initialGuest, initialEntries, initialVersions, ass
               <Field label="Provider">
                 <select className="input" value={g.voiceConfig.provider ?? "none"} onChange={(e) => set("voiceConfig", { ...g.voiceConfig, provider: e.target.value as Guest["voiceConfig"]["provider"] })}>
                   <option value="none">None (text rehearsal)</option>
-                  <option value="elevenlabs" disabled>ElevenLabs stock voice (Milestone 2 - not wired)</option>
+                  <option value="elevenlabs" disabled={!ttsConfigured}>ElevenLabs stock voice{ttsConfigured ? "" : " (ELEVENLABS_API_KEY not set)"}</option>
                 </select>
               </Field>
+              {g.voiceConfig.provider === "elevenlabs" && <VoicePicker value={g.voiceConfig.voiceId ?? ""} allowNonStock={g.voiceConfig.kind === "custom" && g.voiceConfig.consentStatus === "verified"} onPick={(v) => set("voiceConfig", { ...g.voiceConfig, voiceId: v.voiceId, label: `${v.name} (${v.category})` })} />}
+              {g.voiceConfig.voiceId && <p className="text-xs text-ivory-dim">Selected: {g.voiceConfig.label ?? g.voiceConfig.voiceId} <span className="font-mono text-ivory-mute">{g.voiceConfig.voiceId}</span></p>}
               <Field label="Voice kind">
                 <select className="input" value={g.voiceConfig.kind ?? "stock"} onChange={(e) => set("voiceConfig", { ...g.voiceConfig, kind: e.target.value as Guest["voiceConfig"]["kind"] })}>
                   <option value="stock">Stock voice</option>
                   <option value="custom">Custom (requires documented consent)</option>
                 </select>
               </Field>
+              {g.voiceConfig.kind === "custom" && (
+                <Field label="Consent verification" hint="Non-stock voices are refused at synthesis time unless this is 'verified'. Record the consent evidence in the notes.">
+                  <select className="input" value={g.voiceConfig.consentStatus ?? "pending"} onChange={(e) => set("voiceConfig", { ...g.voiceConfig, consentStatus: e.target.value as Guest["voiceConfig"]["consentStatus"] })}>
+                    <option value="pending">pending</option><option value="verified">verified</option><option value="not_applicable">not applicable</option>
+                  </select>
+                </Field>
+              )}
+              <textarea className="input min-h-16 text-xs" placeholder="Voice notes / consent evidence" value={g.voiceConfig.notes ?? ""} onChange={(e) => set("voiceConfig", { ...g.voiceConfig, notes: e.target.value })} />
               <p className="text-xs text-ivory-mute">No celebrity voice cloning. Custom voices require the provider&apos;s consent verification; this app will not bypass it.</p>
             </div>
           </Card>
@@ -256,6 +267,32 @@ function LedgerSection({ guestId, category, entries, onChange }: { guestId: stri
         <input className="input w-44 font-mono text-xs" placeholder="psg_… (optional)" value={passageId} onChange={(e) => setPassageId(e.target.value)} />
         <button className="btn btn-sm" disabled={busy || !text.trim()}>Add</button>
       </form>
+    </div>
+  );
+}
+
+function VoicePicker({ value, allowNonStock, onPick }: { value: string; allowNonStock: boolean; onPick: (v: VoiceOption) => void }) {
+  const [voices, setVoices] = useState<VoiceOption[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  useEffect(() => {
+    api<{ voices: VoiceOption[] }>("/api/voices")
+      .then((r) => setVoices(r.voices))
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not load voices"));
+  }, []);
+  if (error) return <p className="text-xs text-danger">{error}</p>;
+  if (!voices) return <p className="text-xs text-ivory-mute">Loading voices from ElevenLabs…</p>;
+  const shown = voices.filter((v) => (allowNonStock || v.stock) && (!filter || `${v.name} ${Object.values(v.labels).join(" ")}`.toLowerCase().includes(filter.toLowerCase())));
+  const selected = voices.find((v) => v.voiceId === value);
+  return (
+    <div className="space-y-2">
+      <input className="input" placeholder="Filter voices (name, accent, age…)" value={filter} onChange={(e) => setFilter(e.target.value)} />
+      <select className="input" value={value} onChange={(e) => { const v = voices.find((x) => x.voiceId === e.target.value); if (v) onPick(v); }}>
+        <option value="">— choose a voice ({shown.length} {allowNonStock ? "" : "stock "}available) —</option>
+        {shown.map((v) => <option key={v.voiceId} value={v.voiceId}>{v.name} · {v.category}{Object.values(v.labels).length ? ` · ${Object.values(v.labels).slice(0, 3).join(", ")}` : ""}</option>)}
+      </select>
+      {selected?.previewUrl && <audio controls preload="none" className="w-full" src={selected.previewUrl} />}
+      {!allowNonStock && voices.some((v) => !v.stock) && <p className="text-xs text-ivory-mute">{voices.filter((v) => !v.stock).length} cloned/other voice(s) hidden: only stock voices are selectable without verified consent.</p>}
     </div>
   );
 }

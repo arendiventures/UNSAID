@@ -27,7 +27,8 @@ export const GET = route(async (_req: Request, ctx: RouteCtx<{ id: string }>) =>
     guestName: guest.displayName,
     simulationLabel: guest.simulationLabel,
     guestBusy: !!active,
-    latest: latest ? { id: latest.id, seq: latest.seq, spokenText: latest.spokenText, completedAt: latest.completedAt } : null,
+    latest: latest ? { id: latest.id, seq: latest.seq, spokenText: latest.spokenText, completedAt: latest.completedAt, audioAssetId: latest.audioAssetId ?? null } : null,
+    mode: episode.mode,
     visuals: { conceptAssetId: concept?.id ?? null, backdropAssetId: backdrop?.id ?? null, logoAssetId: logo?.id ?? null, mode: "static_image" as const },
   });
 });

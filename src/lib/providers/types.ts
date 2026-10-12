@@ -39,19 +39,22 @@ export interface LlmAdapter {
   generate(input: LlmGenerateInput): Promise<LlmGenerateResult>;
 }
 
-/** Milestone 2: implement one provider each. Interfaces only - no half-built integrations. */
+/** Speech adapters. One provider each (ElevenLabs). */
 export interface SttAdapter {
   readonly id: string;
   info(): ProviderInfo;
   test(): Promise<ConnectionTest>;
-  transcribe(audio: Buffer, mimeType: string, signal?: AbortSignal): Promise<{ text: string; durationMs?: number; raw?: unknown }>;
+  transcribe(audio: Buffer, mimeType: string, signal?: AbortSignal): Promise<{ text: string; durationMs?: number; raw?: Record<string, unknown> }>;
 }
+
+export type VoiceOption = { voiceId: string; name: string; category: string; labels: Record<string, string>; previewUrl: string | null; stock: boolean };
 
 export interface TtsAdapter {
   readonly id: string;
   info(): ProviderInfo;
   test(): Promise<ConnectionTest>;
   synthesize(text: string, voiceId: string, signal?: AbortSignal): Promise<{ audio: Buffer; mimeType: string; raw?: unknown }>;
+  listVoices(refresh?: boolean): Promise<VoiceOption[]>;
 }
 
 /** Milestone 3: live or asynchronous avatar rendering. */

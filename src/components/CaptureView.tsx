@@ -9,7 +9,8 @@ type PublicState = {
   guestName: string;
   simulationLabel: string;
   guestBusy: boolean;
-  latest: { id: string; seq: number; spokenText: string | null; completedAt: string | null } | null;
+  latest: { id: string; seq: number; spokenText: string | null; completedAt: string | null; audioAssetId: string | null } | null;
+  mode: "text" | "audio" | "avatar";
   visuals: { conceptAssetId: string | null; backdropAssetId: string | null; logoAssetId: string | null; mode: "static_image" };
 };
 
@@ -18,10 +19,11 @@ type PublicState = {
  * Contains only: guest visual, branding, the simulation label and optional captions.
  * It calls the audience-safe endpoint, which never returns producer data.
  */
-export function CaptureView({ episodeId, captions, audio }: { episodeId: string; captions: boolean; audio: boolean }) {
+export function CaptureView({ episodeId, captions, audio }: { episodeId: string; captions: boolean; audio: "off" | "guest" | "browser" }) {
   const [state, setState] = useState<PublicState | null>(null);
   const [offline, setOffline] = useState(false);
   const spokenRef = useRef<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -33,11 +35,19 @@ export function CaptureView({ episodeId, captions, audio }: { episodeId: string;
         const s = (await res.json()) as PublicState;
         setState(s);
         setOffline(false);
-        if (audio && s.latest?.spokenText && s.latest.id !== spokenRef.current && "speechSynthesis" in window) {
+        if (s.latest && s.latest.id !== spokenRef.current) {
+          const first = spokenRef.current === null;
           spokenRef.current = s.latest.id;
-          window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(new SpeechSynthesisUtterance(s.latest.spokenText));
-        } else if (s.latest && !spokenRef.current) spokenRef.current = s.latest.id;
+          if (!first) {
+            if (audio === "guest" && s.latest.audioAssetId && audioRef.current) {
+              audioRef.current.src = `/api/assets/${s.latest.audioAssetId}/file`;
+              void audioRef.current.play().catch(() => undefined);
+            } else if (audio === "browser" && s.latest.spokenText && "speechSynthesis" in window) {
+              window.speechSynthesis.cancel();
+              window.speechSynthesis.speak(new SpeechSynthesisUtterance(s.latest.spokenText));
+            }
+          }
+        }
       } catch {
         if (alive) setOffline(true);
       }
@@ -77,6 +87,7 @@ export function CaptureView({ episodeId, captions, audio }: { episodeId: string;
           <p className="max-w-4xl rounded-lg bg-black/70 px-6 py-4 text-center text-2xl leading-relaxed text-ivory backdrop-blur-sm">{state.latest.spokenText}</p>
         </div>
       )}
+      <audio ref={audioRef} className="hidden" />
       {state?.guestBusy && <div className="pulse absolute bottom-10 right-10 h-4 w-4 rounded-full bg-amber" />}
       {offline && <div className="absolute right-8 top-8 rounded bg-black/70 px-3 py-1 text-xs text-danger">capture feed disconnected</div>}
       {state?.status === "ended" && <div className="absolute right-8 top-8 rounded bg-black/70 px-3 py-1 text-xs text-ivory-dim">session ended</div>}

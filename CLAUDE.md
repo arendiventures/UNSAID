@@ -35,6 +35,10 @@ for anyone (human or agent) working in this repository.
   `AbortSignal`. Default model `claude-opus-5-5`, effort `low` for conversational latency (env-tunable).
 - Offline fallback: `LocalEvidenceReader` composes answers from verbatim retrieved excerpts. It is labeled in the
   UI and in its own spoken text; it is **not** a persona simulation.
+- Speech: ElevenLabs via `@elevenlabs/elevenlabs-js` (`providers/stt/elevenlabs.ts` Scribe batch transcription,
+  `providers/tts/elevenlabs.ts` synthesis + voice listing). `services/speech.ts` owns speak-once semantics
+  (idempotency key `tts:<turnId>` in `jobs`, audio stored as an `audio` asset linked to the turn) and the
+  stock-voice rule. Live calls were not exercised in the build sandbox (host blocked); tests stub the transport.
 
 ## Layout
 
@@ -45,8 +49,9 @@ src/app/api/**              route handlers (JSON; multipart for uploads)
 src/lib/db                  schema.ts (Drizzle), client.ts (connection + migrate)
 src/lib/research            chunk.ts, ingest.ts, pdf.ts, retrieval.ts (FTS5/BM25)
 src/lib/engine              schema.ts (response shape), prompt.ts, validate.ts, run.ts (turn state machine)
-src/lib/providers           adapter interfaces (types.ts), registry.ts, llm/{anthropic,local}.ts
-src/lib/services            guests.ts (versioning), episodes.ts (snapshots), assets.ts
+src/lib/providers           adapter interfaces (types.ts), registry.ts, llm/{anthropic,local}.ts,
+                            elevenlabs/client.ts, stt/elevenlabs.ts, tts/elevenlabs.ts
+src/lib/services            guests.ts (versioning), episodes.ts (snapshots), assets.ts, jobs.ts, speech.ts
 src/lib/export              transcript.ts (markdown / json / review notes)
 src/proxy.ts                access control (loopback-only without STUDIO_ACCESS_TOKEN)
 scripts/                    migrate, seed, import-assets
@@ -68,6 +73,11 @@ tests/                      vitest unit/integration tests with synthetic fixture
   accounts are always kept as separate passages.
 - Browser `speechSynthesis` is offered as "browser voice (rehearsal only)" - it is never described as the guest
   voice and is off by default so producer and capture views do not both play audio.
+- Guest audio plays through exactly one `<audio>` element in the studio; the capture view plays nothing unless
+  `?audio=guest` (stored asset) or `?audio=browser` is set. "Stop guest" pauses playback, cancels push-to-talk
+  and aborts the in-flight generation.
+- Episode `mode` is gated server-side by `modeAvailability()`; `audio` needs both speech adapters configured.
+  Push-to-talk clips go nowhere until the button is released.
 
 ## Migration path to a hosted database
 
@@ -86,7 +96,8 @@ introduced - and only then describe search as semantic.
 1. **Done:** local app, guest profiles with versioned instructions and separated evidence ledger, research
    upload/search with stable passage ids, typed interview loop with validation, producer evidence panel,
    persisted episodes, exports, OBS capture view, provider status page.
-2. Speech: one STT + one TTS adapter (interfaces in `providers/types.ts`), push-to-talk, retained audio assets.
+2. **Built, live calls unverified in sandbox:** ElevenLabs STT + TTS adapters, push-to-talk, speak-once audio
+   assets, mode gating, voice picker with stock-only rule. Hands-free turn detection deliberately not added yet.
 3. Avatar: evaluate Tavus / HeyGen against current docs; verify background replacement / transparency before
    promising a composited studio.
 4. Async avatar video jobs (`jobs` table already exists with queued/running/completed/failed/cancelled),

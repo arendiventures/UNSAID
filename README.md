@@ -58,8 +58,15 @@ Studio transcript + producer panel     /api/episodes/:id/public → /capture/:id
   playback. Validation adds milliseconds, not a model call, and is never skipped; latency optimisation later must
   keep it in the path.
 - **Providers**: replaceable adapters for LLM / STT / TTS / avatar (`src/lib/providers/types.ts`). Implemented:
-  Anthropic Claude (Messages API, structured output, prompt caching, cancellation, usage metrics) and an **offline
-  evidence reader** that only reads retrieved excerpts aloud so the loop can be exercised without credentials.
+  Anthropic Claude (Messages API, structured output, prompt caching, cancellation, usage metrics), an **offline
+  evidence reader** that only reads retrieved excerpts aloud so the loop can be exercised without credentials, and
+  **ElevenLabs** for both speech-to-text (Scribe, push-to-talk clips) and text-to-speech (stock voices, MP3 stored
+  once per turn). Avatar: not implemented.
+- **Speech loop** (Milestone 2): hold the talk button (or Space) → clip is uploaded on release → transcribed →
+  asked → validated → synthesized → played through one audio element in the studio. Synthesis is tracked in the
+  `jobs` table with an idempotency key per turn, so a turn is never paid for twice; stored audio is replayable and
+  listed as an asset on the episode. Cloned/celebrity voices are refused unless the guest profile records a custom
+  voice with verified consent.
 - **Storage**: `./storage` (git-ignored) holds the database, uploaded research, brand/guest assets and future
   media. Files are served only through authenticated route handlers.
 - **Access**: binds to 127.0.0.1. Without `STUDIO_ACCESS_TOKEN` only loopback requests are served; with it, every
@@ -77,13 +84,17 @@ See `.env.example`. Summary:
 | `STUDIO_ACCESS_TOKEN` | before network exposure | enables login; without it the app refuses non-loopback requests |
 | `UNSAID_STORAGE_DIR` | no | default `./storage` |
 | `UNSAID_MAX_UPLOAD_MB` | no | default 25 |
-| `ELEVENLABS_API_KEY`, `TAVUS_API_KEY`, `HEYGEN_API_KEY` | no | reserved for Milestones 2-3; no adapter reads them yet |
+| `ELEVENLABS_API_KEY` | for live audio mode | enables push-to-talk transcription and spoken answers |
+| `UNSAID_STT_MODEL` / `UNSAID_TTS_MODEL` | no | defaults `scribe_v2` / `eleven_multilingual_v2` |
+| `UNSAID_ELEVENLABS_VOICE_ID` | no | fallback stock voice when a guest has none selected |
+| `TAVUS_API_KEY`, `HEYGEN_API_KEY` | no | reserved for Milestone 3; no adapter reads them yet |
 
 ## What was actually tested
 
-- `pnpm test`: 23 unit/integration tests (chunking, FTS query hardening, ingestion incl. PDF text vs scanned
+- `pnpm test`: 33 unit/integration tests (chunking, FTS query hardening, ingestion incl. PDF text vs scanned
   detection, duplicate collapse, conflicting accounts preserved, injection text stored as data, citation
-  validation and all blocking flags, prompt delimiter neutralisation, offline reader, exports).
+  validation and all blocking flags, prompt delimiter neutralisation, offline reader, exports, ElevenLabs
+  request shaping against a stubbed transport, speak-once idempotency and voice-consent refusal).
 - End-to-end over HTTP against `pnpm dev` with a synthetic guest: profile create/patch/version bump, ledger entry,
   manual record + markdown upload, unsupported-type rejection (415), search → passage id → same excerpt, episode
   gating (409 before start / after end), two validated turns with real citations, mark-for-review, audience
@@ -100,9 +111,13 @@ See `.env.example`. Summary:
 - **Anthropic Claude**: adapter written against the current SDK (`@anthropic-ai/sdk` 0.133) and typechecked, but
   this build environment had no `ANTHROPIC_API_KEY`, so no real generation or connection test succeeded. Set the
   key, open Settings → "Test connection", then run a rehearsal.
-- **Speech-to-text, text-to-speech, live avatar**: not implemented (Milestones 2-3). Interfaces exist; the UI
-  shows push-to-talk as unavailable and the avatar as a static preview. Outbound access to ElevenLabs, Deepgram,
-  OpenAI, Tavus and HeyGen was blocked from this environment, so their current APIs could not be exercised.
+- **ElevenLabs speech**: adapters are written against the official `@elevenlabs/elevenlabs-js` 2.71 SDK and
+  verified against a stubbed transport (request paths, fields, headers, error mapping). The live API host was
+  blocked from this build environment, so **no real transcription or synthesis has run yet**. With a key set,
+  open Settings → "Test connection" on both speech rows, pick a stock voice on the guest profile, start a
+  "Live audio interview" session and hold the talk button. Hands-free turn detection is not implemented (push-to-talk
+  only, by design for reliability).
+- **Live avatar**: not implemented (Milestone 3). Tavus and HeyGen hosts were blocked from this environment.
 - **OCR** for scanned PDFs: not implemented; such files are stored and flagged.
 
 ## Recording the first rehearsal with OBS
@@ -114,8 +129,10 @@ See `.env.example`. Summary:
    voice; keep playback in one place to avoid doubled audio.
 3. In OBS add a **Window Capture** (or **Browser** source pointing at the capture URL, 1920x1080). Add your
    host camera and microphone as usual. Wear headphones.
-4. Ask questions from the studio window (typed in Milestone 1). Validated answers appear in the capture view a
-   second later; held-for-review answers never do.
+4. Ask questions from the studio window: typed, or hold the talk button in a live audio session. Validated answers
+   appear in the capture view a second later; held-for-review answers never do. Guest audio plays in the studio
+   window by default; add `?audio=guest` to the capture URL only if you want OBS to capture the audio from that
+   window instead, and then turn off "Guest voice" in the studio to avoid doubled playback.
 5. Record in OBS. The transcript, evidence map and review flags are saved independently in the database; if the
    recording fails nothing is lost. Export from **Episodes** (transcript, transcript + evidence, JSON, review
    notes).

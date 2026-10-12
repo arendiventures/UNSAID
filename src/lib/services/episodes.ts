@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { Db } from "@/lib/db/client";
 import { ANSWER_LENGTHS, EPISODE_MODES, episodes, guests, sources, turns, type Episode, type Turn } from "@/lib/db/schema";
 import { newId, nowIso } from "@/lib/ids";
-import { defaultLlmId, getLlm } from "@/lib/providers/registry";
+import { defaultLlmId, getLlm, modeAvailability } from "@/lib/providers/registry";
+import { EngineError } from "@/lib/engine/run";
 import { instructionSnapshot, listEntries } from "./guests";
 
 export const EpisodeInputSchema = z.object({
@@ -33,7 +34,9 @@ export function listTurns(db: Db, episodeId: string): Turn[] {
 
 export function createEpisode(db: Db, input: z.infer<typeof EpisodeInputSchema>): Episode {
   const guest = db.select().from(guests).where(eq(guests.id, input.guestId)).get();
-  if (!guest) throw new Error("Guest not found");
+  if (!guest) throw new EngineError("Guest not found", 404);
+  const modes = modeAvailability();
+  if (!modes[input.mode].available) throw new EngineError(`${input.mode} mode is not available: ${modes[input.mode].reason}`, 409);
   const id = newId("ep");
   const now = nowIso();
   const llmId = input.llmProvider && getLlm(input.llmProvider).id === input.llmProvider ? input.llmProvider : defaultLlmId();

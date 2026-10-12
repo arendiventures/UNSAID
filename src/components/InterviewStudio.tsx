@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Episode, Guest, Turn } from "@/lib/db/schema";
+import type { Episode, EpisodeMode, Guest, Turn } from "@/lib/db/schema";
 import { ANSWER_LENGTHS } from "@/lib/db/schema";
 import type { ProviderInfo } from "@/lib/providers/types";
 import { api } from "@/lib/client";
 import { Badge, Card, Field, Notice, SimulationLabel, fmtDate } from "./ui";
 import { ProducerPanel } from "./ProducerPanel";
 import { DeviceSetup } from "./DeviceSetup";
+import { usePushToTalk } from "./PushToTalk";
 
 export type EpisodeBundle = { episode: Episode; guest: Guest; turns: Turn[]; busy: boolean; provider: ProviderInfo };
+export type ModeAvailability = Record<EpisodeMode, { available: boolean; reason: string }>;
 
 export type UiState = "idle" | "listening" | "transcribing" | "retrieving" | "generating" | "validating" | "speaking" | "interrupted" | "disconnected" | "failed" | "needs_review";
 
@@ -30,12 +32,26 @@ const STATE_META: Record<UiState, { label: string; tone: "default" | "amber" | "
 };
 
 const PIPELINE: UiState[] = ["listening", "transcribing", "retrieving", "generating", "validating", "speaking"];
+const MODE_LABEL: Record<EpisodeMode, string> = { text: "Text rehearsal", audio: "Live audio interview", avatar: "Live avatar interview" };
 
-export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInfo[]; defaultLlmId: string; conceptImages: Record<string, string>; backdropId: string | null; initialEpisode: EpisodeBundle | null; initialGuestId: string | null }) {
+type Props = {
+  guests: Guest[];
+  providers: ProviderInfo[];
+  defaultLlmId: string;
+  conceptImages: Record<string, string>;
+  backdropId: string | null;
+  initialEpisode: EpisodeBundle | null;
+  initialGuestId: string | null;
+  modes: ModeAvailability;
+  ttsConfigured: boolean;
+};
+
+export function InterviewStudio(props: Props) {
   const router = useRouter();
   const [bundle, setBundle] = useState<EpisodeBundle | null>(props.initialEpisode);
   const [guestId, setGuestId] = useState(props.initialEpisode?.guest.id ?? props.guests.find((g) => g.id === props.initialGuestId || g.slug === props.initialGuestId)?.id ?? props.guests[0]?.id ?? "");
   const [title, setTitle] = useState(props.initialEpisode?.episode.title ?? "");
+  const [mode, setMode] = useState<EpisodeMode>(props.initialEpisode?.episode.mode ?? (props.modes.audio.available ? "audio" : "text"));
   const [llmId, setLlmId] = useState(props.initialEpisode?.episode.llmProvider ?? props.defaultLlmId);
   const [answerLength, setAnswerLength] = useState<string>(props.initialEpisode?.episode.answerLength ?? "");
   const [question, setQuestion] = useState("");
@@ -43,36 +59,52 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
   const [error, setError] = useState<string | null>(null);
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(props.initialEpisode?.turns.at(-1)?.id ?? null);
   const [browserVoice, setBrowserVoice] = useState(false);
+  const [guestVoice, setGuestVoice] = useState(props.ttsConfigured && (props.initialEpisode?.episode.mode ?? "text") === "audio");
+  const [autoAsk, setAutoAsk] = useState(true);
+  const [deviceId, setDeviceId] = useState("");
   const [notes, setNotes] = useState(props.initialEpisode?.episode.hostNotes ?? "");
   const [busy, setBusy] = useState(false);
+  const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
   const notesTimer = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const episode = bundle?.episode ?? null;
   const guest = bundle?.guest ?? props.guests.find((g) => g.id === guestId) ?? null;
   const live = episode?.status === "live";
   const conceptId = guest ? props.conceptImages[guest.id] : undefined;
+  const pttAvailable = props.modes.audio.available;
 
   const refresh = useCallback(async (): Promise<EpisodeBundle | null> => {
     if (!episode) return null;
     try {
       const b = await api<EpisodeBundle>(`/api/episodes/${episode.id}`);
       setBundle(b);
-      if (ui === "disconnected") setUi("idle");
+      setUi((s) => (s === "disconnected" ? "idle" : s));
       return b;
     } catch (e) {
       if (e instanceof TypeError) setUi("disconnected");
       return null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [episode?.id, ui]);
+  }, [episode]);
 
   const stopPolling = () => {
     if (pollRef.current) window.clearInterval(pollRef.current);
     pollRef.current = null;
   };
 
-  const speak = useCallback(
+  const stopAllPlayback = useCallback(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    const a = audioRef.current;
+    if (a) {
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
+    }
+    setSpeakingTurnId(null);
+  }, []);
+
+  const speakBrowser = useCallback(
     (text: string) => {
       if (!browserVoice || typeof window === "undefined" || !("speechSynthesis" in window)) return false;
       window.speechSynthesis.cancel();
@@ -86,6 +118,43 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
     [browserVoice],
   );
 
+  /** Synthesize once (server dedupes), then play the stored asset through the single audio element. */
+  const playGuestAudio = useCallback(
+    async (turn: Turn): Promise<boolean> => {
+      try {
+        let url = turn.audioAssetId ? `/api/assets/${turn.audioAssetId}/file` : null;
+        if (!url) {
+          setUi("speaking");
+          const r = await api<{ url: string }>(`/api/turns/${turn.id}/speak`, { method: "POST", json: {} });
+          url = r.url;
+          await refresh();
+        }
+        const a = audioRef.current;
+        if (!a) return false;
+        a.src = url;
+        setSpeakingTurnId(turn.id);
+        setUi("speaking");
+        a.onended = () => {
+          setUi((s) => (s === "speaking" ? "idle" : s));
+          setSpeakingTurnId(null);
+        };
+        a.onerror = () => {
+          setUi("idle");
+          setSpeakingTurnId(null);
+          setError("Audio playback failed in this browser.");
+        };
+        await a.play();
+        return true;
+      } catch (e) {
+        setUi("idle");
+        setSpeakingTurnId(null);
+        setError(e instanceof Error ? `Voice synthesis failed: ${e.message}` : "Voice synthesis failed");
+        return false;
+      }
+    },
+    [refresh],
+  );
+
   async function startSession() {
     if (!guestId || !title.trim()) {
       setError("Pick a guest and name the episode first.");
@@ -94,10 +163,11 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
     setBusy(true);
     setError(null);
     try {
-      const ep = await api<Episode>("/api/episodes", { method: "POST", json: { guestId, title: title.trim(), mode: "text", answerLength: answerLength || null, llmProvider: llmId } });
+      const ep = await api<Episode>("/api/episodes", { method: "POST", json: { guestId, title: title.trim(), mode, answerLength: answerLength || null, llmProvider: llmId } });
       await api(`/api/episodes/${ep.id}/start`, { method: "POST" });
       const b = await api<EpisodeBundle>(`/api/episodes/${ep.id}`);
       setBundle(b);
+      setGuestVoice(props.ttsConfigured && mode === "audio");
       setUi("idle");
       router.replace(`/studio?episode=${ep.id}`);
     } catch (e) {
@@ -107,8 +177,9 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
     }
   }
 
-  async function ask(q: string) {
+  async function ask(q: string, extra: { inputMode?: "typed" | "voice"; transcriptMeta?: Record<string, unknown> | null } = {}) {
     if (!episode || !q.trim()) return;
+    stopAllPlayback();
     setBusy(true);
     setError(null);
     setUi("retrieving");
@@ -119,19 +190,20 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
       if (active) setUi(active.state as UiState);
     }, 600);
     try {
-      const turn = await api<Turn>(`/api/episodes/${episode.id}/turns`, { method: "POST", json: { question: q, inputMode: "typed", llmId: episode.llmProvider } });
+      const turn = await api<Turn>(`/api/episodes/${episode.id}/turns`, { method: "POST", json: { question: q, inputMode: extra.inputMode ?? "typed", llmId: episode.llmProvider, transcriptMeta: extra.transcriptMeta ?? null } });
       stopPolling();
-      const b = await refresh();
+      await refresh();
       setSelectedTurnId(turn.id);
       if (turn.state === "ready" && turn.spokenText) {
-        if (!speak(turn.spokenText)) setUi("idle");
+        if (guestVoice && props.ttsConfigured) {
+          if (!(await playGuestAudio(turn))) setUi("idle");
+        } else if (!speakBrowser(turn.spokenText)) setUi("idle");
       } else if (turn.state === "needs_review") setUi("needs_review");
       else if (turn.state === "interrupted") setUi("interrupted");
       else if (turn.state === "failed") {
         setUi("failed");
         setError(turn.error ?? "The provider failed. The session and transcript are intact.");
       }
-      void b;
     } catch (e) {
       stopPolling();
       await refresh();
@@ -147,13 +219,48 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
     }
   }
 
+  const ptt = usePushToTalk({
+    deviceId,
+    enabled: !!live && pttAvailable && !busy,
+    onStateChange: (s) => {
+      if (s === "recording") setUi("listening");
+      else if (s === "idle") setUi((prev) => (prev === "listening" ? "idle" : prev));
+    },
+    onClip: async (blob, mimeType, durationMs) => {
+      if (!episode) return;
+      setUi("transcribing");
+      setError(null);
+      const fd = new FormData();
+      fd.set("audio", blob, "clip");
+      fd.set("mimeType", mimeType);
+      try {
+        const r = await api<{ text: string; provider: string; model: string; durationMs: number; meta: Record<string, unknown> | null }>(`/api/episodes/${episode.id}/transcribe`, { method: "POST", body: fd });
+        const meta = { provider: r.provider, model: r.model, transcribeMs: r.durationMs, clipMs: durationMs, ...(r.meta ?? {}) };
+        if (!r.text) {
+          setUi("idle");
+          setError("Nothing was transcribed from that clip.");
+          return;
+        }
+        if (autoAsk) await ask(r.text, { inputMode: "voice", transcriptMeta: meta });
+        else {
+          setQuestion(r.text);
+          setUi("idle");
+        }
+      } catch (e) {
+        setUi("failed");
+        setError(e instanceof Error ? `Transcription failed: ${e.message}` : "Transcription failed");
+        throw e;
+      }
+    },
+  });
+
   async function stop() {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    stopAllPlayback();
+    if (ptt.state === "recording") ptt.cancel();
     if (episode) {
       try {
         const r = await api<{ cancelled: number }>(`/api/episodes/${episode.id}/stop`, { method: "POST" });
-        if (r.cancelled > 0 || ui === "speaking") setUi("interrupted");
-        else setUi("idle");
+        setUi(r.cancelled > 0 || ui === "speaking" ? "interrupted" : "idle");
       } catch {
         setUi("idle");
       }
@@ -164,7 +271,7 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
   async function endSession() {
     if (!episode) return;
     if (!confirm("End this session? The transcript is kept; you will not be able to ask further questions in it.")) return;
-    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    stopAllPlayback();
     await api(`/api/episodes/${episode.id}/end`, { method: "POST" });
     await refresh();
     setUi("idle");
@@ -196,7 +303,6 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
   useEffect(() => () => stopPolling(), []);
   useEffect(() => {
     if (bundle?.busy && !pollRef.current) {
-      // Resumed a session with an in-flight turn (e.g. after a reload): watch it finish.
       pollRef.current = window.setInterval(async () => {
         const b = await refresh();
         if (b && !b.busy) {
@@ -205,19 +311,20 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
         }
       }, 800);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bundle?.busy]);
+  }, [bundle?.busy, refresh]);
 
   const turns = bundle?.turns ?? [];
   const selectedTurn = turns.find((t) => t.id === selectedTurnId) ?? turns.at(-1) ?? null;
   const providerInfo = bundle?.provider ?? props.providers.find((p) => p.id === llmId);
   const localMode = (providerInfo?.id ?? llmId) === "local-evidence-reader";
+  const pttLabel = ptt.state === "recording" ? "Release to send" : ptt.state === "uploading" ? "Transcribing…" : "Hold to talk";
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-5">
+      <audio ref={audioRef} className="hidden" />
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="eyebrow">Interview studio · text rehearsal mode</div>
+          <div className="eyebrow">Interview studio · {episode ? MODE_LABEL[episode.mode] : MODE_LABEL[mode]}</div>
           <h1 className="display text-4xl font-semibold">{episode ? episode.title : "New session"}</h1>
         </div>
         <div className="flex items-center gap-2">
@@ -237,9 +344,9 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
         </Notice>
       )}
       {error && <Notice tone="danger">{error}</Notice>}
+      {ptt.error && <Notice tone="warn">{ptt.error}</Notice>}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
-        {/* ---------- Left: session + guest + transcript ---------- */}
         <div className="space-y-5">
           {!episode && (
             <Card eyebrow="Session" title="Set up a session">
@@ -250,6 +357,13 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
                   </select>
                 </Field>
                 <Field label="Episode name"><input className="input" placeholder="e.g. Rehearsal 1 - opening questions" value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
+                <Field label="Mode" hint={props.modes[mode].available ? (mode === "audio" ? "Push-to-talk transcription and spoken answers via ElevenLabs." : "Typed questions, text answers. Optional browser voice for rehearsal.") : props.modes[mode].reason}>
+                  <select className="input" value={mode} onChange={(e) => setMode(e.target.value as EpisodeMode)}>
+                    {(["text", "audio", "avatar"] as EpisodeMode[]).map((m) => (
+                      <option key={m} value={m} disabled={!props.modes[m].available}>{MODE_LABEL[m]}{props.modes[m].available ? "" : ` - unavailable (${props.modes[m].reason})`}</option>
+                    ))}
+                  </select>
+                </Field>
                 <Field label="Language model">
                   <select className="input" value={llmId} onChange={(e) => setLlmId(e.target.value)}>
                     {props.providers.map((p) => <option key={p.id} value={p.id} disabled={!p.configured}>{p.name}{p.configured ? "" : " (not configured)"}</option>)}
@@ -263,7 +377,7 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
                 </Field>
               </div>
               <div className="mt-4 flex items-center gap-3">
-                <button className="btn btn-primary" disabled={busy || !guestId || !title.trim()} onClick={startSession}>Start session</button>
+                <button className="btn btn-primary" disabled={busy || !guestId || !title.trim() || !props.modes[mode].available} onClick={startSession}>Start session</button>
                 <span className="text-xs text-ivory-mute">Starting freezes the guest instructions (v{guest?.currentVersion}) and the research collection for this episode.</span>
               </div>
             </Card>
@@ -292,11 +406,15 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
                 </div>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-3 text-xs text-ivory-mute">
+            <div className="flex flex-wrap items-center gap-4 border-t border-line px-4 py-3 text-xs text-ivory-mute">
               <span>Still image. No lip-sync, no animation. Live avatar is Milestone 3.</span>
-              <label className="ml-auto flex items-center gap-2">
-                <input type="checkbox" checked={browserVoice} onChange={(e) => setBrowserVoice(e.target.checked)} />
-                Browser voice (system TTS, rehearsal only - not the guest voice)
+              <label className="ml-auto flex items-center gap-2" title={props.ttsConfigured ? "Answers are synthesized with the guest's selected stock voice (ElevenLabs) and stored once per turn." : "Needs ELEVENLABS_API_KEY"}>
+                <input type="checkbox" checked={guestVoice} disabled={!props.ttsConfigured} onChange={(e) => { setGuestVoice(e.target.checked); if (e.target.checked) setBrowserVoice(false); }} />
+                Guest voice (ElevenLabs stock voice){props.ttsConfigured ? "" : " - not configured"}
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={browserVoice} disabled={guestVoice} onChange={(e) => setBrowserVoice(e.target.checked)} />
+                Browser voice (system TTS, rehearsal only)
               </label>
             </div>
           </div>
@@ -310,25 +428,30 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
                 </li>
               ))}
             </ol>
-            <p className="mt-2 text-xs text-ivory-mute">Listening and transcribing require a speech-to-text provider (Milestone 2). Every answer is validated against retrieved passages before it can be shown as spoken; that adds milliseconds, not a model call, and is never skipped.</p>
+            <p className="mt-2 text-xs text-ivory-mute">{pttAvailable ? "Listening and transcribing use push-to-talk (ElevenLabs Scribe)." : `Listening and transcribing are unavailable: ${props.modes.audio.reason}`} Every answer is validated against retrieved passages before it can be shown or spoken; synthesis starts only after validation.</p>
           </Card>
 
           <Card eyebrow="Conversation" title="Live transcript" actions={episode && <Badge tone={episode.status === "live" ? "ok" : "default"}>{episode.status}</Badge>}>
             <div className="max-h-[48vh] space-y-3 overflow-auto pr-1">
-              {turns.length === 0 && <p className="text-sm text-ivory-mute">{episode ? "No questions yet. Type one below." : "Start a session to begin."}</p>}
+              {turns.length === 0 && <p className="text-sm text-ivory-mute">{episode ? "No questions yet. Type one below or hold to talk." : "Start a session to begin."}</p>}
               {turns.map((t) => (
                 <div key={t.id} className={`cursor-pointer rounded-lg border p-3 transition ${selectedTurn?.id === t.id ? "border-amber/60 bg-amber/5" : "border-line bg-bg-elev hover:border-line-strong"}`} onClick={() => setSelectedTurnId(t.id)}>
                   <div className="flex items-center justify-between text-xs text-ivory-mute">
-                    <span>#{t.seq} · Host · {fmtDate(t.createdAt)}</span>
+                    <span>#{t.seq} · Host{t.inputMode === "voice" ? " (voice)" : ""} · {fmtDate(t.createdAt)}</span>
                     <div className="flex items-center gap-1.5">
                       <TurnStateBadge state={t.state} />
                       {t.reviewFlag && <Badge tone="warn">Marked</Badge>}
+                      {t.state === "ready" && (t.audioAssetId || props.ttsConfigured) && (
+                        <button className="btn btn-ghost btn-sm" disabled={speakingTurnId === t.id} onClick={(e) => { e.stopPropagation(); stopAllPlayback(); void playGuestAudio(t); }} title={t.audioAssetId ? "Replay stored audio" : "Synthesize with ElevenLabs (spends characters) and play"}>
+                          {speakingTurnId === t.id ? "Playing…" : t.audioAssetId ? "Play" : "Generate voice"}
+                        </button>
+                      )}
                       <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); void toggleReview(t); }}>{t.reviewFlag ? "Unmark" : "Mark for review"}</button>
                     </div>
                   </div>
                   <p className="mt-1 text-sm text-ivory">{t.questionText}</p>
                   <div className="mt-2 border-l-2 border-amber/50 pl-3">
-                    <div className="text-xs text-ivory-mute">{guest?.displayName} · {guest?.simulationLabel}</div>
+                    <div className="text-xs text-ivory-mute">{guest?.displayName} · {guest?.simulationLabel}{t.audioAssetId ? " · audio stored" : ""}</div>
                     {t.spokenText ? <p className={`mt-0.5 text-sm ${t.state === "ready" ? "text-ivory-dim" : "text-warn"}`}>{t.spokenText}</p> : <p className="mt-0.5 text-sm italic text-ivory-mute">{t.state === "failed" ? `No answer: ${t.error}` : t.state === "interrupted" ? "Stopped before an answer was produced." : t.error ?? "…"}</p>}
                     {t.state === "needs_review" && <p className="mt-1 text-xs text-warn">Held for review - not shown in the capture view. See the producer panel.</p>}
                   </div>
@@ -344,7 +467,7 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
             >
               <textarea
                 className="input min-h-[72px]"
-                placeholder={live ? "Type the host question (push-to-talk needs a speech provider)…" : episode ? "Session ended." : "Start a session first."}
+                placeholder={live ? (pttAvailable ? "Type the host question, or hold the talk button…" : "Type the host question…") : episode ? "Session ended." : "Start a session first."}
                 value={question}
                 disabled={!live || busy}
                 onChange={(e) => setQuestion(e.target.value)}
@@ -356,20 +479,37 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
                 }}
               />
               <div className="flex flex-col gap-2">
-                <button className="btn btn-primary" disabled={!live || busy || !question.trim()}>Ask</button>
-                <button type="button" className="btn btn-danger" disabled={!episode || (!busy && ui !== "speaking")} onClick={stop}>Stop guest</button>
+                <button
+                  type="button"
+                  className={`btn ${ptt.state === "recording" ? "btn-danger pulse" : "btn-primary"}`}
+                  disabled={!live || !pttAvailable || busy || ptt.state === "uploading"}
+                  title={pttAvailable ? "Hold to record; release to transcribe. Space also works outside text fields." : props.modes.audio.reason}
+                  onMouseDown={(e) => { e.preventDefault(); void ptt.start(); }}
+                  onMouseUp={ptt.stop}
+                  onMouseLeave={() => { if (ptt.state === "recording") ptt.stop(); }}
+                  onTouchStart={(e) => { e.preventDefault(); void ptt.start(); }}
+                  onTouchEnd={ptt.stop}
+                >
+                  {pttLabel}
+                </button>
+                <button className="btn" disabled={!live || busy || !question.trim()}>Ask (typed)</button>
+                <button type="button" className="btn btn-danger" disabled={!episode || (!busy && ui !== "speaking" && ptt.state !== "recording")} onClick={stop}>Stop guest</button>
               </div>
             </form>
             {episode && (
-              <div className="mt-3 flex items-center justify-between text-xs text-ivory-mute">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ivory-mute">
                 <span>Provider: {providerInfo?.name} · {episode.llmModel ?? "-"} · guest v{episode.guestVersion} · {episode.researchSnapshot?.sourceIds?.length ?? 0} sources in snapshot</span>
-                {live ? <button className="btn btn-ghost btn-sm" onClick={endSession}>End session</button> : <Link href="/studio" className="btn btn-ghost btn-sm">New session</Link>}
+                <div className="flex items-center gap-3">
+                  {pttAvailable && (
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={autoAsk} onChange={(e) => setAutoAsk(e.target.checked)} /> Ask immediately after transcription</label>
+                  )}
+                  {live ? <button className="btn btn-ghost btn-sm" onClick={endSession}>End session</button> : <Link href="/studio" className="btn btn-ghost btn-sm">New session</Link>}
+                </div>
               </div>
             )}
           </Card>
         </div>
 
-        {/* ---------- Right: producer panel, notes, devices ---------- */}
         <div className="space-y-5">
           <ProducerPanel turn={selectedTurn} />
           <Card eyebrow="Host" title="Question notes">
@@ -383,7 +523,7 @@ export function InterviewStudio(props: { guests: Guest[]; providers: ProviderInf
               </Field>
             </div>
           </Card>
-          <DeviceSetup />
+          <DeviceSetup deviceId={deviceId} onDeviceChange={setDeviceId} pttAvailable={pttAvailable} pttReason={props.modes.audio.reason} />
         </div>
       </div>
     </div>

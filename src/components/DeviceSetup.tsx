@@ -4,13 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { Badge, Card, Field } from "./ui";
 
 /**
- * Microphone permission, device selection and a live level meter. Push-to-talk itself
- * stays disabled until a speech-to-text adapter exists (Milestone 2).
+ * Microphone permission, device selection and a live level meter. The push-to-talk control
+ * itself lives in the studio composer; this card reports whether it is available.
  */
-export function DeviceSetup() {
+export function DeviceSetup({ deviceId, onDeviceChange, pttAvailable, pttReason }: { deviceId: string; onDeviceChange: (id: string) => void; pttAvailable: boolean; pttReason: string }) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
-  const [deviceId, setDeviceId] = useState("");
+  const setDeviceId = onDeviceChange;
   const [permission, setPermission] = useState<"unknown" | "granted" | "denied" | "unsupported">("unknown");
   const [level, setLevel] = useState(0);
   const [active, setActive] = useState(false);
@@ -84,7 +84,7 @@ export function DeviceSetup() {
             <div className="h-full bg-gradient-to-r from-ok via-amber to-danger transition-[width] duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
           </div>
         </div>
-        <button className="btn w-full" disabled title="Push-to-talk needs a speech-to-text provider (Milestone 2).">Push to talk - unavailable (no STT provider)</button>
+        <div className={`rounded border px-3 py-2 text-xs ${pttAvailable ? "border-ok/40 text-ok" : "border-line text-ivory-mute"}`}>{pttAvailable ? "Push-to-talk available: hold the button in the composer (or hold Space outside a text field)." : `Push-to-talk unavailable: ${pttReason}`}</div>
         <p className="text-xs text-ivory-mute">Recommended: wear headphones. Guest audio must never be routed back into the microphone input.</p>
       </div>
     </Card>

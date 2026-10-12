@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { listGuests } from "@/lib/services/guests";
 import { listAssets } from "@/lib/services/assets";
-import { listProviders, defaultLlmId } from "@/lib/providers/registry";
+import { listProviders, defaultLlmId, modeAvailability, getTts } from "@/lib/providers/registry";
 import { getEpisode, listTurns } from "@/lib/services/episodes";
 import { getGuest } from "@/lib/services/guests";
 import { isEpisodeBusy } from "@/lib/engine/run";
@@ -32,6 +32,8 @@ export default async function StudioPage({ searchParams }: { searchParams: Promi
       backdropId={assets.find((a) => a.kind === "studio_backdrop")?.id ?? null}
       initialEpisode={initial}
       initialGuestId={sp.guest ?? null}
+      modes={modeAvailability()}
+      ttsConfigured={getTts().info().configured}
     />
   );
 }
