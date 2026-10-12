@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "@/lib/db/client";
 import { ANSWER_LENGTHS, EPISODE_MODES, episodes, guests, sources, turns, type Episode, type Turn } from "@/lib/db/schema";
@@ -68,7 +68,7 @@ export function startEpisode(db: Db, id: string): Episode {
   const srcIds = db
     .select({ id: sources.id })
     .from(sources)
-    .where(and(eq(sources.guestId, guest.id), eq(sources.ingestStatus, "ingested")))
+    .where(and(eq(sources.guestId, guest.id), eq(sources.ingestStatus, "ingested"), ne(sources.reviewStatus, "excluded")))
     .all()
     .map((s) => s.id);
   const passageCount = db.get<{ n: number }>(sql`select count(*) as n from passages where guest_id = ${guest.id}`)?.n ?? 0;
@@ -119,12 +119,33 @@ export function patchEpisode(db: Db, id: string, patch: z.infer<typeof EpisodePa
   return getEpisode(db, id);
 }
 
-export function setTurnReview(db: Db, turnId: string, reviewFlag: boolean, reviewNote?: string): Turn | undefined {
-  db.update(turns)
-    .set({ reviewFlag, ...(reviewNote !== undefined ? { reviewNote } : {}) })
-    .where(eq(turns.id, turnId))
-    .run();
+export function setTurnReview(db: Db, turnId: string, patch: { reviewFlag?: boolean; reviewNote?: string; reviewResolved?: boolean }): Turn | undefined {
+  const set: Partial<typeof turns.$inferInsert> = {};
+  if (patch.reviewFlag !== undefined) set.reviewFlag = patch.reviewFlag;
+  if (patch.reviewNote !== undefined) set.reviewNote = patch.reviewNote;
+  if (patch.reviewResolved !== undefined) set.reviewResolvedAt = patch.reviewResolved ? nowIso() : null;
+  if (Object.keys(set).length) db.update(turns).set(set).where(eq(turns.id, turnId)).run();
   return db.select().from(turns).where(eq(turns.id, turnId)).get();
+}
+
+/** Producer review queue: turns held or flagged and not yet resolved, plus sources awaiting review. */
+export function reviewQueue(db: Db) {
+  const heldTurns = db
+    .select({ turn: turns, episodeTitle: episodes.title, guestName: guests.displayName, episodeStatus: episodes.status })
+    .from(turns)
+    .innerJoin(episodes, eq(episodes.id, turns.episodeId))
+    .innerJoin(guests, eq(guests.id, episodes.guestId))
+    .where(and(sql`${turns.reviewResolvedAt} IS NULL`, sql`(${turns.reviewFlag} = 1 OR ${turns.state} IN ('needs_review','failed'))`))
+    .orderBy(desc(turns.createdAt))
+    .all();
+  const pendingSources = db
+    .select({ source: sources, guestName: guests.displayName })
+    .from(sources)
+    .innerJoin(guests, eq(guests.id, sources.guestId))
+    .where(sql`${sources.reviewStatus} IN ('unreviewed','disputed')`)
+    .orderBy(desc(sources.createdAt))
+    .all();
+  return { heldTurns, pendingSources };
 }
 
 export function deleteEpisode(db: Db, id: string): boolean {

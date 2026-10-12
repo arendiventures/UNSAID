@@ -10,6 +10,7 @@ const ITEMS = [
   { href: "/research", label: "Research" },
   { href: "/studio", label: "Interview Studio" },
   { href: "/episodes", label: "Episodes" },
+  { href: "/review", label: "Review" },
   { href: "/assets", label: "Assets" },
   { href: "/settings", label: "Settings" },
 ];

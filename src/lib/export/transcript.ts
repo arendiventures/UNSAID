@@ -41,13 +41,14 @@ export function transcriptMarkdown({ episode, guest, turns }: ExportBundle, opts
       const p = t.producer as unknown as ProducerRecord | null;
       if (p) {
         lines.push(`- Evidence category: ${p.evidenceCategory}`);
-        lines.push(`- Citations: ${p.citations.length ? p.citations.map((c) => `${c.passageId} (${c.sourceTitle}${c.locator ? `, ${c.locator}` : ""})`).join("; ") : "none"}`);
+        lines.push(`- Citations: ${p.citations.length ? p.citations.map((c) => `${c.passageId} (${c.sourceTitle}${c.locator ? `, ${c.locator}` : ""}${c.sourceReviewStatus === "disputed" ? ", DISPUTED SOURCE" : ""})`).join("; ") : "none"}`);
         if (p.explanation) lines.push(`- Explanation: ${p.explanation}`);
         if (p.conflictingEvidence) lines.push(`- Conflicting evidence: ${p.conflictingEvidence}`);
         if (p.claimsNeedingReview.length) lines.push(`- Claims needing review: ${p.claimsNeedingReview.join(" | ")}`);
         if (p.flags.length) lines.push(`- Flags: ${p.flags.map((f) => `${f.severity.toUpperCase()} ${f.code}: ${f.detail}`).join(" | ")}`);
       }
       if (t.reviewNote) lines.push(`- Review note: ${t.reviewNote}`);
+      if (t.reviewResolvedAt) lines.push(`- Review resolved: ${fmtTime(t.reviewResolvedAt)}`);
       lines.push("");
     }
   }
@@ -59,7 +60,7 @@ export function reviewNotesMarkdown(bundle: ExportBundle): string {
   const lines = [`# Review notes - ${bundle.episode.title}`, "", `${flagged.length} turn(s) need attention.`, ""];
   for (const t of flagged) {
     const p = t.producer as unknown as ProducerRecord | null;
-    lines.push(`## Turn ${t.seq} - ${t.state}${t.reviewFlag ? " (marked)" : ""}`);
+    lines.push(`## Turn ${t.seq} - ${t.state}${t.reviewFlag ? " (marked)" : ""}${t.reviewResolvedAt ? " (resolved)" : " (open)"}`);
     lines.push("");
     lines.push(`**Q:** ${t.questionText}`);
     lines.push("");

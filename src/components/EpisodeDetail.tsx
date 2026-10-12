@@ -62,7 +62,10 @@ export function EpisodeDetail({ episode, guest, turns }: { episode: Episode; gue
               <div key={t.id} className={`cursor-pointer rounded-lg border p-3 ${selected?.id === t.id ? "border-amber/60 bg-amber/5" : "border-line bg-bg-elev"}`} onClick={() => setSelected(t)}>
                 <div className="flex items-center justify-between text-xs text-ivory-mute">
                   <span>#{t.seq} · {fmtDate(t.createdAt)}{t.latencyMs != null ? ` · ${t.latencyMs} ms` : ""}</span>
-                  <div className="flex items-center gap-1.5"><TurnStateBadge state={t.state} />{t.reviewFlag && <Badge tone="warn">Marked</Badge>}
+                  <div className="flex items-center gap-1.5"><TurnStateBadge state={t.state} />{t.reviewFlag && <Badge tone="warn">Marked</Badge>}{t.reviewResolvedAt && <Badge tone="ok">Resolved</Badge>}
+                    {(t.reviewFlag || t.state === "needs_review" || t.state === "failed") && !t.reviewResolvedAt && (
+                      <button className="btn btn-ghost btn-sm" onClick={async (e) => { e.stopPropagation(); const note = window.prompt("Resolution note", t.reviewNote || ""); if (note === null) return; await api(`/api/turns/${t.id}`, { method: "PATCH", json: { reviewResolved: true, reviewNote: note } }); router.refresh(); }}>Resolve</button>
+                    )}
                     <button className="btn btn-ghost btn-sm" onClick={async (e) => { e.stopPropagation(); const note = t.reviewFlag ? undefined : (window.prompt("Review note (optional)", t.reviewNote || "") ?? undefined); await api(`/api/turns/${t.id}`, { method: "PATCH", json: { reviewFlag: !t.reviewFlag, reviewNote: note } }); router.refresh(); }}>{t.reviewFlag ? "Unmark" : "Mark"}</button>
                   </div>
                 </div>

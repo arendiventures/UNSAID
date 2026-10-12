@@ -15,6 +15,13 @@
       "when": 1791784231241,
       "tag": "0001_passages_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791794195098,
+      "tag": "0002_review_workflow",
+      "breakpoints": true
     }
   ]
 }

@@ -57,7 +57,7 @@ function extractPassages(message: string): Lite[] {
       passageId: m[1]!,
       text: m[3] ?? "",
       locator,
-      source: { title, authorOrg, publishedAt, url: "", sourceType: sourceType.replace(/ /g, "_"), isPublic: true },
+      source: { title, authorOrg, publishedAt, url: "", sourceType: sourceType.replace(/ /g, "_"), isPublic: true, reviewStatus: "unreviewed" },
     });
   }
   return out;

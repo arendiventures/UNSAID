@@ -11,6 +11,7 @@ import type { IngestOutcome } from "@/lib/research/ingest";
 import { Badge, Card, Empty, Field, Notice, fmtDate } from "./ui";
 
 const STATUS_TONE = { ingested: "ok", ocr_required: "warn", failed: "danger", pending: "default" } as const;
+const REVIEW_TONE = { unreviewed: "default", reviewed: "ok", disputed: "warn", excluded: "danger" } as const;
 
 export function ResearchWorkbench({ guests, initialSources, initialGuestId }: { guests: Guest[]; initialSources: Source[]; initialGuestId: string }) {
   const router = useRouter();
@@ -66,7 +67,7 @@ export function ResearchWorkbench({ guests, initialSources, initialGuestId }: { 
                 <li key={s.id} className="rounded-lg border border-line bg-bg-elev p-3">
                   <div className="flex items-start justify-between gap-2">
                     <Link href={`/research/${s.id}`} className="display text-base leading-tight text-ivory hover:text-amber-bright">{s.title}</Link>
-                    <Badge tone={STATUS_TONE[s.ingestStatus]}>{s.ingestStatus.replace(/_/g, " ")}</Badge>
+                    <div className="flex shrink-0 flex-col items-end gap-1"><Badge tone={STATUS_TONE[s.ingestStatus]}>{s.ingestStatus.replace(/_/g, " ")}</Badge><Badge tone={REVIEW_TONE[s.reviewStatus]}>{s.reviewStatus}</Badge></div>
                   </div>
                   <div className="mt-1 text-xs text-ivory-mute">{[s.authorOrg, s.publishedAt, s.sourceType.replace(/_/g, " ")].filter(Boolean).join(" · ")}</div>
                   <div className="mt-1 flex items-center justify-between text-xs text-ivory-mute">
@@ -107,7 +108,8 @@ function SearchPanel({ guestId }: { guestId: string }) {
         <div className="mt-4 space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs text-ivory-mute">
             <Badge>{result.method.replace(/_/g, " ")}</Badge>
-            <span>{result.passages.length} passage(s) shown · {result.totalMatches} raw match(es)</span>
+            <Badge tone={result.strategy === "all_terms" ? "ok" : result.strategy === "mixed" ? "info" : "default"}>{result.strategy.replace(/_/g, " ")}</Badge>
+            <span>{result.passages.length} passage(s) shown · {result.totalMatches} raw match(es) · excluded sources omitted</span>
             <span className="font-mono">FTS: {result.ftsQuery || "(no searchable terms)"}</span>
           </div>
           {result.passages.length === 0 && <Empty title="No matches">Try different words. Lexical search needs overlapping vocabulary.</Empty>}
@@ -115,7 +117,7 @@ function SearchPanel({ guestId }: { guestId: string }) {
             <div key={p.passageId} className="rounded-lg border border-line bg-bg-elev p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Link href={`/research/${p.sourceId}?passage=${p.passageId}&q=${encodeURIComponent(q)}`} className="font-mono text-xs text-amber-bright hover:underline">{p.passageId}</Link>
-                <span className="text-xs text-ivory-mute">{[p.source.title, p.locator].filter(Boolean).join(" · ")} · bm25 {p.score.toFixed(2)}</span>
+                <span className="flex items-center gap-1.5 text-xs text-ivory-mute">{[p.source.title, p.locator].filter(Boolean).join(" · ")} · bm25 {p.score.toFixed(2)}<Badge tone={p.matchMode === "all_terms" ? "ok" : "default"}>{p.matchMode === "all_terms" ? "all terms" : "some terms"}</Badge>{p.source.reviewStatus !== "unreviewed" && <Badge tone={REVIEW_TONE[p.source.reviewStatus as keyof typeof REVIEW_TONE]}>{p.source.reviewStatus}</Badge>}</span>
               </div>
               <p className="prose-source mt-2 text-sm text-ivory-dim">{p.text}</p>
               {p.duplicateIds.length > 0 && <div className="mt-1 text-xs text-ivory-mute">Identical text also in: <span className="font-mono">{p.duplicateIds.join(", ")}</span></div>}

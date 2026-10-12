@@ -72,6 +72,13 @@ tests/                      vitest unit/integration tests with synthetic fixture
   episode is scoped to the snapshot's source ids.
 - Only exact (normalized-text) duplicate passages are collapsed, and only in retrieval output; conflicting
   accounts are always kept as separate passages.
+- Retrieval runs an all-terms FTS query first, then fills from the any-terms query (`matchMode` per passage,
+  `strategy` per result). Quoted phrases in the host question are mandatory. Sources with
+  `reviewStatus = "excluded"` are filtered in SQL and omitted from episode snapshots; `disputed` passages carry
+  `review="disputed"` in the evidence block and produce the `cites_disputed_source` warning flag.
+- Review workflow: `services/episodes.ts` → `reviewQueue()` (held/flagged unresolved turns + unreviewed or
+  disputed sources), `setTurnReview()` (flag, note, resolution timestamp); `research/ingest.ts` → `updateSource()`
+  (review status + metadata edits, timestamps review changes).
 - Browser `speechSynthesis` is offered as "browser voice (rehearsal only)" - it is never described as the guest
   voice and is off by default so producer and capture views do not both play audio.
 - Guest audio plays through exactly one `<audio>` element in the studio; the capture view plays nothing unless
@@ -108,5 +115,5 @@ all interfaces for Tailscale-style access from a phone; the proxy still requires
    assets, mode gating, voice picker with stock-only rule. Hands-free turn detection deliberately not added yet.
 3. Avatar: evaluate Tavus / HeyGen against current docs; verify background replacement / transparency before
    promising a composited studio.
-4. Async avatar video jobs (`jobs` table already exists with queued/running/completed/failed/cancelled),
-   improved retrieval, source review workflow.
+4. **Partly done:** source review workflow and precision-first retrieval are in. Remaining: async avatar video
+   jobs (the `jobs` ledger is ready), semantic retrieval only if embeddings are actually added.

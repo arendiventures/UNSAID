@@ -14,7 +14,8 @@ export type ValidationFlag = {
     | "overlong"
     | "ids_in_spoken_text"
     | "refused"
-    | "provider_error";
+    | "provider_error"
+    | "cites_disputed_source";
   severity: "block" | "warn";
   detail: string;
 };
@@ -31,7 +32,7 @@ export type ProducerRecord = {
   allegationNote: string;
   questionTreatedAsLeading: boolean;
   recordEstablishesAnswer: GuestResponse["record_establishes_answer"] | "no";
-  citations: { passageId: string; excerpt: string; locator: string; sourceId: string; sourceTitle: string; sourceType: string }[];
+  citations: { passageId: string; excerpt: string; locator: string; sourceId: string; sourceTitle: string; sourceType: string; sourceReviewStatus: string }[];
   invalidCitations: string[];
   retrievedPassageIds: string[];
   flags: ValidationFlag[];
@@ -114,6 +115,8 @@ export function validateResponse(raw: unknown, retrieved: RetrievedPassage[], op
       flags.push({ code: "allegation_without_attribution", severity: "block", detail: r.allegation_note || "Answer implicates an identifiable person without cited attribution." });
     }
   }
+  const disputed = valid.filter((id) => byId.get(id)?.source.reviewStatus === "disputed");
+  if (disputed.length > 0) flags.push({ code: "cites_disputed_source", severity: "warn", detail: `Relies on producer-disputed source material: ${disputed.join(", ")}` });
   const maxSentences = opts.maxSentences ?? 8;
   if (countSentences(spoken) > maxSentences) flags.push({ code: "overlong", severity: "warn", detail: `More than ${maxSentences} sentences.` });
 
@@ -137,7 +140,7 @@ function finish(r: GuestResponse, valid: string[], invalid: string[], retrieved:
     recordEstablishesAnswer: r.record_establishes_answer,
     citations: valid.map((id) => {
       const p = byId.get(id)!;
-      return { passageId: id, excerpt: p.text, locator: p.locator, sourceId: p.sourceId, sourceTitle: p.source.title, sourceType: p.source.sourceType };
+      return { passageId: id, excerpt: p.text, locator: p.locator, sourceId: p.sourceId, sourceTitle: p.source.title, sourceType: p.source.sourceType, sourceReviewStatus: p.source.reviewStatus };
     }),
     invalidCitations: invalid,
     retrievedPassageIds: retrieved.map((p) => p.passageId),

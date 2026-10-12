@@ -58,7 +58,7 @@ export function ProducerPanel({ turn }: { turn: Turn | null }) {
                 <li key={c.passageId} className="rounded border border-line bg-bg-elev p-2">
                   <div className="flex items-center justify-between text-xs">
                     <Link href={`/research/${c.sourceId}?passage=${c.passageId}`} className="font-mono text-amber-bright hover:underline" target="_blank">{c.passageId}</Link>
-                    <span className="text-ivory-mute">{c.sourceTitle}{c.locator ? ` · ${c.locator}` : ""} · {c.sourceType.replace(/_/g, " ")}</span>
+                    <span className="flex items-center gap-1.5 text-ivory-mute">{c.sourceTitle}{c.locator ? ` · ${c.locator}` : ""} · {c.sourceType.replace(/_/g, " ")}{c.sourceReviewStatus === "disputed" && <Badge tone="warn">disputed source</Badge>}{c.sourceReviewStatus === "reviewed" && <Badge tone="ok">reviewed</Badge>}</span>
                   </div>
                   <p className="prose-source mt-1 max-h-32 overflow-auto text-xs text-ivory-dim">{c.excerpt}</p>
                 </li>

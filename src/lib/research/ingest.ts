@@ -3,7 +3,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { passages, sources, type IngestStatus, type SourceType, type Source } from "@/lib/db/schema";
+import { z } from "zod";
+import { passages, sources, SOURCE_REVIEW_STATUSES, SOURCE_TYPES, type IngestStatus, type SourceType, type Source } from "@/lib/db/schema";
 import { storageDir } from "@/lib/config/env";
 import { newId, nowIso, passageId } from "@/lib/ids";
 import { chunkPages, chunkText, cleanText, contentHash, type Chunk } from "./chunk";
@@ -160,6 +161,32 @@ function persistSource(
         ? `OCR required: ${body.error}`
         : `Ingestion failed: ${body.error}`;
   return { source, passageCount: body.chunks.length, duplicatePassages, status: body.status, message };
+}
+
+export const SourceReviewSchema = z.object({
+  reviewStatus: z.enum(SOURCE_REVIEW_STATUSES).optional(),
+  reviewNotes: z.string().max(4000).optional(),
+  title: z.string().trim().min(1).max(300).optional(),
+  authorOrg: z.string().max(300).optional(),
+  publishedAt: z.string().max(60).optional(),
+  url: z.string().max(2000).optional(),
+  sourceType: z.enum(SOURCE_TYPES).optional(),
+  locator: z.string().max(200).optional(),
+  summary: z.string().max(4000).optional(),
+  provenanceNotes: z.string().max(4000).optional(),
+  permissionNotes: z.string().max(4000).optional(),
+  isPublic: z.boolean().optional(),
+});
+
+/** Producer review / metadata edits. Review status changes are timestamped; excluded sources leave retrieval immediately. */
+export function updateSource(db: Db, sourceId: string, patch: z.infer<typeof SourceReviewSchema>): Source | undefined {
+  const current = db.select().from(sources).where(eq(sources.id, sourceId)).get();
+  if (!current) return undefined;
+  const now = nowIso();
+  const set: Partial<typeof sources.$inferInsert> = { ...patch, updatedAt: now };
+  if (patch.reviewStatus && patch.reviewStatus !== current.reviewStatus) set.reviewedAt = patch.reviewStatus === "unreviewed" ? null : now;
+  db.update(sources).set(set).where(eq(sources.id, sourceId)).run();
+  return db.select().from(sources).where(eq(sources.id, sourceId)).get();
 }
 
 export function deleteSource(db: Db, sourceId: string): boolean {

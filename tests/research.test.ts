@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { openMemoryDatabase } from "@/lib/db/client";
 import { createGuest } from "@/lib/services/guests";
-import { ingestManualRecord, ingestPdf, ingestText } from "@/lib/research/ingest";
+import { ingestManualRecord, ingestPdf, ingestText, updateSource } from "@/lib/research/ingest";
+import { createEpisode, reviewQueue, setTurnReview, startEpisode } from "@/lib/services/episodes";
+import { turns } from "@/lib/db/schema";
 import { buildFtsQuery, getPassagesByIds, searchPassages } from "@/lib/research/retrieval";
 import { chunkText, cleanText } from "@/lib/research/chunk";
 import { FIXTURE_GUEST, FIXTURE_SOURCE_A, FIXTURE_SOURCE_B, FIXTURE_SOURCE_C, FIXTURE_SOURCE_INJECTION, makeImageOnlyPdf, makeTextPdf } from "./fixtures/synthetic";
@@ -33,6 +35,10 @@ describe("fts query builder", () => {
   });
   it("neutralises fts operators", () => {
     expect(buildFtsQuery('NEAR( "x" ) AND OR NOT ^ *')).not.toMatch(/NEAR|AND|NOT/);
+  });
+  it("builds an all-terms variant and honours quoted phrases", () => {
+    expect(buildFtsQuery("lamp burned all night", "all")).toBe('"lamp" AND "burned"* AND "night"*');
+    expect(buildFtsQuery('did she say "read the log" to the board?', "any")).toBe('"read the log" AND ("say" OR "board"*)');
   });
 });
 
@@ -76,6 +82,53 @@ describe("ingestion + retrieval", () => {
     ingestManualRecord(db, guestId, FIXTURE_SOURCE_INJECTION);
     const r = searchPassages(sqlite, guestId, "cat named Lantern oil store");
     expect(r.passages[0]?.text).toContain("ignore all previous instructions");
+  });
+
+  it("ranks all-terms matches first and only fills with any-term matches", () => {
+    const r = searchPassages(sqlite, guestId, "freighter Anselm endangered", { limit: 10 });
+    expect(r.passages[0]?.matchMode).toBe("all_terms");
+    expect(r.passages[0]?.text).toContain("Anselm");
+    expect(["all_terms", "mixed"]).toContain(r.strategy);
+    const only = r.passages.filter((p) => p.matchMode === "all_terms");
+    expect(only.length).toBeGreaterThanOrEqual(1);
+    const idx = r.passages.findIndex((p) => p.matchMode === "any_term");
+    if (idx >= 0) expect(r.passages.slice(idx).every((p) => p.matchMode === "any_term")).toBe(true);
+  });
+
+  it("excludes producer-excluded sources from retrieval and from episode snapshots, keeps disputed ones tagged", () => {
+    const before = searchPassages(sqlite, guestId, "complaint Orrin Vale freighter", { limit: 10 });
+    const minutes = before.passages.find((p) => p.source.title.startsWith("Harbour board"))!;
+    expect(minutes).toBeDefined();
+    const disputed = updateSource(db, minutes.sourceId, { reviewStatus: "disputed", reviewNotes: "Transcript provenance unclear (synthetic)." })!;
+    expect(disputed.reviewStatus).toBe("disputed");
+    expect(disputed.reviewedAt).toBeTruthy();
+    const mid = searchPassages(sqlite, guestId, "complaint Orrin Vale freighter", { limit: 10 });
+    expect(mid.passages.find((p) => p.sourceId === minutes.sourceId)?.source.reviewStatus).toBe("disputed");
+    updateSource(db, minutes.sourceId, { reviewStatus: "excluded" });
+    const after = searchPassages(sqlite, guestId, "complaint Orrin Vale freighter", { limit: 10 });
+    expect(after.passages.some((p) => p.sourceId === minutes.sourceId)).toBe(false);
+    const ep = startEpisode(db, createEpisode(db, { guestId, title: "snapshot test", mode: "text" }).id);
+    expect(ep.researchSnapshot.sourceIds).not.toContain(minutes.sourceId);
+    updateSource(db, minutes.sourceId, { reviewStatus: "reviewed" });
+    expect(searchPassages(sqlite, guestId, "complaint Orrin Vale freighter", { limit: 10 }).passages.some((p) => p.sourceId === minutes.sourceId)).toBe(true);
+  });
+
+  it("review queue lists held turns and pending sources, and resolution clears a turn", () => {
+    const ep = startEpisode(db, createEpisode(db, { guestId, title: "queue test", mode: "text" }).id);
+    const now = new Date().toISOString();
+    db.insert(turns).values({ id: "trn_q1", episodeId: ep.id, seq: 1, questionText: "q", state: "needs_review", spokenText: "held", createdAt: now }).run();
+    db.insert(turns).values({ id: "trn_q2", episodeId: ep.id, seq: 2, questionText: "q", state: "ready", spokenText: "fine", reviewFlag: true, createdAt: now }).run();
+    db.insert(turns).values({ id: "trn_q3", episodeId: ep.id, seq: 3, questionText: "q", state: "ready", spokenText: "fine", createdAt: now }).run();
+    let q = reviewQueue(db);
+    const ids = q.heldTurns.map((h) => h.turn.id);
+    expect(ids).toContain("trn_q1");
+    expect(ids).toContain("trn_q2");
+    expect(ids).not.toContain("trn_q3");
+    expect(q.pendingSources.some((s) => s.source.reviewStatus === "unreviewed")).toBe(true);
+    const resolved = setTurnReview(db, "trn_q1", { reviewResolved: true, reviewNote: "checked against minutes" })!;
+    expect(resolved.reviewResolvedAt).toBeTruthy();
+    q = reviewQueue(db);
+    expect(q.heldTurns.map((h) => h.turn.id)).not.toContain("trn_q1");
   });
 
   it("scopes retrieval to the given source ids", () => {

@@ -52,7 +52,12 @@ Studio transcript + producer panel     /api/episodes/:id/public → /capture/:id
 - **Research**: text / markdown / text-based PDF uploads and manually pasted excerpts with source links. Documents
   are split into passages with stable ids (`psg_<source>_<seq>`), exact duplicates are collapsed in retrieval but
   kept on disk, conflicting accounts are preserved. Search is **lexical** (SQLite FTS5 + BM25) - not semantic.
-  Scanned PDFs are stored and marked **OCR required** (OCR is not implemented).
+  Retrieval is precision-first: passages matching every significant term rank ahead of any-term matches, and
+  quoted phrases are required. Scanned PDFs are stored and marked **OCR required** (OCR is not implemented).
+- **Source review workflow**: every source is `unreviewed`, `reviewed`, `disputed` or `excluded`. Excluded
+  sources leave retrieval and new episode snapshots immediately; disputed passages are still retrieved but tagged
+  in the evidence block, and answers relying on them are flagged. The **Review** screen queues held or
+  host-flagged answers and unreviewed sources; resolutions are timestamped and appear in exports.
 - **Conversation engine**: behavior (profile, ledger, performance directions) is separated from evidence
   (retrieved passages). Output is a structured response (`spoken_text` + producer metadata) validated before
   playback. Validation adds milliseconds, not a model call, and is never skipped; latency optimisation later must
@@ -91,10 +96,11 @@ See `.env.example`. Summary:
 
 ## What was actually tested
 
-- `pnpm test`: 33 unit/integration tests (chunking, FTS query hardening, ingestion incl. PDF text vs scanned
+- `pnpm test`: 39 unit/integration tests (chunking, FTS query hardening, ingestion incl. PDF text vs scanned
   detection, duplicate collapse, conflicting accounts preserved, injection text stored as data, citation
   validation and all blocking flags, prompt delimiter neutralisation, offline reader, exports, ElevenLabs
-  request shaping against a stubbed transport, speak-once idempotency and voice-consent refusal).
+  request shaping against a stubbed transport, speak-once idempotency and voice-consent refusal, precision-first
+  retrieval, source exclusion/dispute handling, review queue and resolution).
 - End-to-end over HTTP against `pnpm dev` with a synthetic guest: profile create/patch/version bump, ledger entry,
   manual record + markdown upload, unsupported-type rejection (415), search → passage id → same excerpt, episode
   gating (409 before start / after end), two validated turns with real citations, mark-for-review, audience

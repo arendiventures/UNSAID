@@ -1,8 +1,8 @@
 import { asc, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { passages, sources } from "@/lib/db/schema";
-import { fail, ok, route, type RouteCtx } from "@/lib/api";
-import { deleteSource } from "@/lib/research/ingest";
+import { fail, ok, readJson, route, type RouteCtx } from "@/lib/api";
+import { deleteSource, SourceReviewSchema, updateSource } from "@/lib/research/ingest";
 
 export const GET = route(async (_req: Request, ctx: RouteCtx<{ id: string }>) => {
   const { id } = await ctx.params;
@@ -11,6 +11,13 @@ export const GET = route(async (_req: Request, ctx: RouteCtx<{ id: string }>) =>
   if (!source) return fail("Source not found", 404);
   const rows = db.select().from(passages).where(eq(passages.sourceId, id)).orderBy(asc(passages.seq)).all();
   return ok({ source, passages: rows });
+});
+
+export const PATCH = route(async (req: Request, ctx: RouteCtx<{ id: string }>) => {
+  const { id } = await ctx.params;
+  const patch = await readJson(req, SourceReviewSchema);
+  const src = updateSource(getDb(), id, patch);
+  return src ? ok(src) : fail("Source not found", 404);
 });
 
 export const DELETE = route(async (_req: Request, ctx: RouteCtx<{ id: string }>) => {

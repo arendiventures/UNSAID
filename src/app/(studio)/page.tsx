@@ -10,12 +10,13 @@ export const dynamic = "force-dynamic";
 
 export default function OverviewPage() {
   const db = getDb();
-  const counts = db.get<{ guests: number; sources: number; passages: number; episodes: number; review: number }>(sql`
+  const counts = db.get<{ guests: number; sources: number; passages: number; episodes: number; review: number; pendingSources: number }>(sql`
     select (select count(*) from guests) as guests,
            (select count(*) from sources) as sources,
            (select count(*) from passages) as passages,
            (select count(*) from episodes) as episodes,
-           (select count(*) from turns where review_flag = 1 or state = 'needs_review') as review`)!;
+           (select count(*) from turns where review_resolved_at is null and (review_flag = 1 or state in ('needs_review','failed'))) as review,
+           (select count(*) from sources where review_status in ('unreviewed','disputed')) as pendingSources`)!;
   const providers = listProviders();
   const llm = providers.find((p) => p.id === "anthropic")!;
   const logo = findAsset(db, "brand_logo");
@@ -55,7 +56,7 @@ export default function OverviewPage() {
         <Stat label="Sources" value={counts.sources} sub="in research" />
         <Stat label="Passages" value={counts.passages} sub="searchable" />
         <Stat label="Episodes" value={counts.episodes} sub="sessions" />
-        <Stat label="Needs review" value={counts.review} sub="flagged turns" />
+        <Stat label="Needs review" value={counts.review} sub={<Link href="/review" className="hover:text-amber-bright">{counts.pendingSources} source(s) unreviewed →</Link>} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

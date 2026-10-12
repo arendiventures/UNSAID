@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { SOURCE_REVIEW_STATUSES } from "@/lib/db/schema";
+import { api } from "@/lib/client";
 import type { Passage, Source } from "@/lib/db/schema";
 import { Badge, Card, fmtDate } from "./ui";
 
@@ -32,6 +35,7 @@ export function SourceDetail({ source, passages, guestName, highlight, focusPass
         <h1 className="display text-3xl font-semibold">{source.title}</h1>
         <div className="mt-2 flex flex-wrap gap-1.5">
           <Badge tone={source.ingestStatus === "ingested" ? "ok" : source.ingestStatus === "ocr_required" ? "warn" : "danger"}>{source.ingestStatus.replace(/_/g, " ")}</Badge>
+          <Badge tone={source.reviewStatus === "reviewed" ? "ok" : source.reviewStatus === "disputed" ? "warn" : source.reviewStatus === "excluded" ? "danger" : "default"}>review: {source.reviewStatus}</Badge>
           <Badge tone={source.isPublic ? "default" : "warn"}>{source.isPublic ? "public" : "non-public"}</Badge>
           <Badge>{passages.length} passages</Badge>
           <Badge>{source.charCount.toLocaleString()} chars</Badge>
@@ -55,6 +59,7 @@ export function SourceDetail({ source, passages, guestName, highlight, focusPass
           </div>
         </Card>
         <div className="space-y-4">
+          <ReviewCard source={source} />
           <Card eyebrow="Record" title="Metadata">
             <dl className="space-y-2 text-sm">
               <Row k="Author / org" v={source.authorOrg} />
@@ -90,5 +95,35 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
       <dt className="eyebrow">{k}</dt>
       <dd className="mt-0.5 text-ivory-dim">{v || <span className="text-ivory-mute">—</span>}</dd>
     </div>
+  );
+}
+
+function ReviewCard({ source }: { source: Source }) {
+  const router = useRouter();
+  const [status, setStatus] = useState(source.reviewStatus);
+  const [notes, setNotes] = useState(source.reviewNotes);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const dirty = status !== source.reviewStatus || notes !== source.reviewNotes;
+  return (
+    <Card eyebrow="Producer review" title="Source review">
+      <div className="space-y-3 text-sm">
+        <select className="input" value={status} onChange={(e) => setStatus(e.target.value as Source["reviewStatus"])}>
+          {SOURCE_REVIEW_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+        </select>
+        <p className="text-xs text-ivory-mute">
+          {status === "reviewed" && "Provenance and content checked. Passages are tagged reviewed in the evidence block."}
+          {status === "disputed" && "Contested material. Passages are still retrieved but tagged disputed; answers relying on them are flagged for the producer."}
+          {status === "excluded" && "Removed from retrieval and from new episode snapshots. Existing citations keep their stored excerpts."}
+          {status === "unreviewed" && "Nobody has checked this source yet."}
+        </p>
+        <textarea className="input min-h-20 text-xs" placeholder="Review notes (what was checked, concerns, who reviewed)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <div className="flex items-center gap-2">
+          <button className="btn btn-primary btn-sm" disabled={!dirty || busy} onClick={async () => { setBusy(true); try { await api(`/api/sources/${source.id}`, { method: "PATCH", json: { reviewStatus: status, reviewNotes: notes } }); setSaved(`Saved ${new Date().toLocaleTimeString()}`); router.refresh(); } finally { setBusy(false); } }}>Save review</button>
+          {source.reviewedAt && <span className="text-xs text-ivory-mute">last reviewed {fmtDate(source.reviewedAt)}</span>}
+          {saved && <span className="text-xs text-ok">{saved}</span>}
+        </div>
+      </div>
+    </Card>
   );
 }

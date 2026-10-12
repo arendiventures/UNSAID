@@ -53,6 +53,7 @@ export const SOURCE_TYPES = [
   "other",
 ] as const;
 export const INGEST_STATUSES = ["pending", "ingested", "ocr_required", "failed"] as const;
+export const SOURCE_REVIEW_STATUSES = ["unreviewed", "reviewed", "disputed", "excluded"] as const;
 export const EPISODE_MODES = ["text", "audio", "avatar"] as const;
 export const EPISODE_STATUSES = ["draft", "live", "ended"] as const;
 export const TURN_STATES = [
@@ -84,6 +85,7 @@ export type AnswerLength = (typeof ANSWER_LENGTHS)[number];
 export type EntryCategory = (typeof ENTRY_CATEGORIES)[number];
 export type SourceType = (typeof SOURCE_TYPES)[number];
 export type IngestStatus = (typeof INGEST_STATUSES)[number];
+export type SourceReviewStatus = (typeof SOURCE_REVIEW_STATUSES)[number];
 export type EpisodeMode = (typeof EPISODE_MODES)[number];
 export type EpisodeStatus = (typeof EPISODE_STATUSES)[number];
 export type TurnState = (typeof TURN_STATES)[number];
@@ -176,6 +178,9 @@ export const sources = sqliteTable(
     isPublic: integer("is_public", { mode: "boolean" }).notNull().default(true),
     ingestStatus: text("ingest_status").$type<IngestStatus>().notNull().default("pending"),
     ingestError: text("ingest_error"),
+    reviewStatus: text("review_status").$type<SourceReviewStatus>().notNull().default("unreviewed"),
+    reviewNotes: text("review_notes").notNull().default(""),
+    reviewedAt: text("reviewed_at"),
     contentHash: text("content_hash"),
     charCount: integer("char_count").notNull().default(0),
     passageCount: integer("passage_count").notNull().default(0),
@@ -259,6 +264,7 @@ export const turns = sqliteTable(
     error: text("error"),
     reviewFlag: integer("review_flag", { mode: "boolean" }).notNull().default(false),
     reviewNote: text("review_note").notNull().default(""),
+    reviewResolvedAt: text("review_resolved_at"),
     audioAssetId: text("audio_asset_id"),
     createdAt: text("created_at").notNull(),
     completedAt: text("completed_at"),
