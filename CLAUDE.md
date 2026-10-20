@@ -55,7 +55,7 @@ src/lib/providers           adapter interfaces (types.ts), registry.ts, llm/{ant
 src/lib/services            guests.ts (versioning), episodes.ts (snapshots), assets.ts, jobs.ts, speech.ts
 src/lib/export              transcript.ts (markdown / json / review notes)
 src/proxy.ts                access control (loopback-only without STUDIO_ACCESS_TOKEN)
-scripts/                    migrate, seed, import-assets
+scripts/                    migrate, seed, demo-seed (synthetic demo guest), import-assets
 tests/                      vitest unit/integration tests with synthetic fixtures
 ```
 

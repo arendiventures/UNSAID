@@ -14,8 +14,15 @@ pnpm install
 cp .env.example .env.local        # fill in ANTHROPIC_API_KEY when you have one; everything else is optional
 pnpm db:migrate                   # creates ./storage/db/unsaid.sqlite and applies migrations
 pnpm db:seed                      # draft guest profiles (no research attached)
+pnpm demo:seed                    # optional: a clearly labeled SYNTHETIC demo guest + two fictional sources
 pnpm dev                          # http://127.0.0.1:3000
 ```
+
+**Two-minute demo without any API keys:** after `pnpm demo:seed`, open the Interview Studio, pick
+"Mara Quill (synthetic fixture)", name the episode, Start session, and ask *"Did you put out the lamp during
+the gale?"*. The offline evidence reader answers from the fictional sources with passage citations in the
+producer panel; "Open OBS capture view" shows the audience-safe view. Delete the demo guest from Guests when
+you no longer need it.
 
 Optional: register brand/guest images into private storage (they are git-ignored):
 
