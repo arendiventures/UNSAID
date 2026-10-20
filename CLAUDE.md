@@ -98,13 +98,14 @@ introduced - and only then describe search as semantic.
 
 `output: "standalone"` in `next.config.ts`; `Dockerfile` copies the standalone server, static assets, `public/`
 and `drizzle/` (migrations run on first DB open). Runtime env: `UNSAID_STORAGE_DIR=/data` on a persistent
-volume, `STUDIO_ACCESS_TOKEN` (mandatory off-loopback), provider keys. `pnpm dev:lan` / `pnpm start:lan` bind to
-all interfaces for Tailscale-style access from a phone; the proxy still requires the token for non-loopback hosts.
+volume, `STUDIO_ACCESS_TOKEN` (mandatory off-loopback), provider keys. `pnpm start` (scripts/start.mjs) honours `PORT`
+and binds to 0.0.0.0 only when `STUDIO_ACCESS_TOKEN` is set; `pnpm dev:lan` binds all interfaces in dev for
+Tailscale-style access. The proxy still requires the token for non-loopback hosts either way.
 
 ## Commands
 
 `pnpm dev` (127.0.0.1:3000) · `pnpm dev:lan` · `pnpm typecheck` · `pnpm lint` · `pnpm test` · `pnpm db:migrate` · `pnpm db:seed` ·
-`pnpm assets:import <kind> <file> [--guest slug]` · `pnpm build && pnpm start`
+`pnpm assets:import <kind> <file> [--guest slug]` · `pnpm build && pnpm start` (PORT / STUDIO_ACCESS_TOKEN aware)
 
 ## Milestones
 

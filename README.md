@@ -151,10 +151,19 @@ tailscale serve 3000     # prints an https://… address reachable from the phon
 Open that address on the phone, enter the token, and use **/remote** - the phone-sized host remote (big talk
 button, transcript, stop, end). Research, profiles and OBS stay on the desktop studio.
 
-**Hosted (always on).** The `Dockerfile` builds a self-contained image. On Railway, Fly.io or Render: deploy from
+**Hosted (always on).** `pnpm build && pnpm start` honours the host's `PORT` and binds to all interfaces only when
+`STUDIO_ACCESS_TOKEN` is set (otherwise loopback only). Node 22 is pinned via `engines`, `.node-version` and
+`packageManager` for buildpack hosts. The `Dockerfile` builds a self-contained image. On Railway, Fly.io or Render: deploy from
 this repo, mount a persistent volume at `/data`, and set `STUDIO_ACCESS_TOKEN`, `ANTHROPIC_API_KEY` and
 `ELEVENLABS_API_KEY` in the host's environment settings. The container refuses requests until the token is set.
 Migrations run on first start; create guests from the Guests screen (the seed script is a dev-only helper).
+
+**Base44 (GitHub import).** Base44 can import a repo and run it as a Docker web service. Connect GitHub, install
+the Base44 GitHub App for this private repo, import `arendiventures/UNSAID`, then set these project secrets:
+`STUDIO_ACCESS_TOKEN` (required, or the app refuses every request), `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY`.
+Caveat: unless Base44 gives the container a persistent disk, the SQLite database, uploaded research and audio
+under the storage directory are lost on every redeploy or restart - export episodes you care about, and treat it
+as a demo host, not the archive. This path has not been tested by the authors.
 
 ## Recording the first rehearsal with OBS
 

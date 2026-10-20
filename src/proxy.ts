@@ -24,9 +24,10 @@ export async function proxy(req: NextRequest) {
   if (cookie === expected) return NextResponse.next();
 
   if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
-  url.searchParams.set("next", pathname);
+  // Redirect to the address the browser used (behind a hosting proxy nextUrl carries the internal bind address).
+  const externalHost = req.headers.get("x-forwarded-host") ?? host ?? req.nextUrl.host;
+  const proto = req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(":", "");
+  const url = new URL(`/login?next=${encodeURIComponent(pathname)}`, `${proto}://${externalHost}`);
   return NextResponse.redirect(url);
 }
 
